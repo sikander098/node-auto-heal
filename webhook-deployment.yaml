@@ -1,0 +1,114 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: node-heal-sa
+  namespace: monitoring
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: node-heal-role
+rules:
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: node-heal-binding
+subjects:
+- kind: ServiceAccount
+  name: node-heal-sa
+  namespace: monitoring
+roleRef:
+  kind: ClusterRole
+  name: node-heal-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: node-heal-webhook
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: node-heal-webhook
+  template:
+    metadata:
+      labels:
+        app: node-heal-webhook
+    spec:
+      serviceAccountName: node-heal-sa
+      containers:
+      - name: webhook
+        image: python:3.11-slim
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            pip install --quiet fastapi uvicorn kubernetes slack_sdk
+            mkdir -p /app
+            cat > /app/main.py << 'PYEOF'
+            from fastapi import FastAPI, Request
+            import os
+            from kubernetes import client, config
+
+            app = FastAPI()
+            config.load_incluster_config()
+            v1 = client.CoreV1Api()
+            healed_nodes = set()
+
+            def get_node_name_from_ip(instance):
+                ip = instance.split(":")[0]
+                for node in v1.list_node().items:
+                    for addr in node.status.addresses:
+                        if addr.type == "InternalIP" and addr.address == ip:
+                            return node.metadata.name
+                return None
+
+            @app.post("/webhook")
+            async def webhook(req: Request):
+                alerts = await req.json()
+                for a in alerts.get("alerts", []):
+                    if a.get("labels", {}).get("heal") == "true":
+                        instance = a["labels"]["instance"]
+                        node = get_node_name_from_ip(instance)
+                        if not node:
+                            print(f"Could not find node for {instance}")
+                            continue
+                        if "control-plane" in node:
+                            print(f"Skipping control-plane node {node}")
+                            continue
+                        if node in healed_nodes:
+                            print(f"Already healed {node}, skipping")
+                            continue
+                        print(f"Healing node {node}")
+                        try:
+                            v1.patch_node(node, {"spec": {"unschedulable": True}})
+                            print(f"Successfully cordoned {node}")
+                            healed_nodes.add(node)
+                        except Exception as e:
+                            print(f"Heal error: {e}")
+                return "ok"
+
+            @app.get("/health")
+            async def health():
+                return {"status": "healthy"}
+            PYEOF
+            cd /app && uvicorn main:app --host 0.0.0.0 --port 8000
+        ports:
+        - containerPort: 8000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: node-heal-webhook
+  namespace: monitoring
+spec:
+  selector:
+    app: node-heal-webhook
+  ports:
+  - port: 8000
+    targetPort: 8000
