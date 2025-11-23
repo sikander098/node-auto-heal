@@ -188,11 +188,9 @@ kubectl -n monitoring logs -l app.kubernetes.io/name=alertmanager | grep webhook
 MIT
 ## Demo
 
-### Architecture Overview
-![Architecture](autohealing-project.png)
-
 ### Auto-heal pipeline in action
 ![Webhook Logs](Screenshot%202025-11-23%20044349.png)
+![Architecture](autohealing-project.png)
 
 ### Nodes cordoned automatically
 ![Nodes Cordoned](Screenshot%202025-11-23%20045129.png)
