@@ -194,3 +194,7 @@ MIT
 
 ### Nodes cordoned automatically
 ![Nodes Cordoned](Screenshot%202025-11-23%20045129.png)
+
+### Chaos Engineering Experiment
+Proof of resilience: Simulating node failures to verify auto-healing capabilities.
+![Chaos Experiment](screenshots/node-cordon-chaos-experiment.png)
